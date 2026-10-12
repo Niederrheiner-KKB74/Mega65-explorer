@@ -1,7 +1,7 @@
 # MEGA65 Explorer — 0.1a
 
 A two-panel file explorer for the MEGA65, written in KickAssembler assembly for
-the 45GS02. Stage 1a adds a **mock-data GUI prototype**. The source assembles successfully; machine validation is still pending.
+the 45GS02. Stage 1a adds a **mock-data GUI prototype**. The source assembles successfully; the README checklist has passed in XEMU, as reported by the project owner.
 
 Implemented in source: native 80×25 text screen, cyan text, white reversed active
 panel title and selection, independent directories (24/18 records), cursor
@@ -45,8 +45,11 @@ Validated jar SHA-256:
 PRG SHA-256:
 `5d769ca331572e712a555595053c2a167c5a6acdf397e5dfed0751e6cce420cb`. Its $2001 load address, BASIC
 SYS launcher and $2020 entry opcode were checked. 864 source-instruction
-navigation cases passed, plus record/import checks. XEMU is absent and real
-hardware is unavailable; rendering, real keyboard input and exit are unverified.
+navigation cases passed, plus record/import checks. The project owner confirmed on 2026-10-12 that all README checklist items work
+as intended in XEMU, including rendering, navigation, scrolling, panel-state
+preservation and X return to BASIC. This is owner-reported validation; the agent
+did not run XEMU. The XEMU/ROM versions were not supplied. Real MEGA65 hardware
+testing remains outstanding.
 See docs/architecture.md and the manual checklist below.
 
 ## Launch and manual acceptance test
@@ -83,7 +86,7 @@ No entry opens, mounts, renames, deletes, copies or launches anything.
 
 ## Roadmap
 
-1. Stage 1a validation: assemble, run in XEMU, verify exit on real hardware.
+1. Stage 1a: assembly and owner-reported XEMU checklist passed; verify on real hardware.
 2. Define backend enumeration/error handling and replace mock records via VFS.
 3. Read-only FAT32 SD and D81/DOS browsing, then internal/external drives and IEC.
 4. Copy, rename, delete and launch operations with explicit error handling.
