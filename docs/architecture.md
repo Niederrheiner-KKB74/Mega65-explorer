@@ -1,91 +1,169 @@
-# Stage 1a architecture
+# Stage 1b architecture
 
-The GUI consumes a small read-only VFS record interface. Navigation knows only
-counts and indices; it does not know registers, filenames or storage devices.
+The stable Stage 1a reference is commit d4bf66207e900b756f96f67a12cf4e9f58da19ff;
+its source is unchanged on the Stage 1a branch. The project owner confirmed both
+XEMU and hardware testing. Future regular release testing requires XEMU only.
 
-| File | Responsibility / public interface |
+## Data flow and module interfaces
+
+`HDOS → drivers/fat32.asm → core/vfs.asm → bounded records → gui/filelist.asm`.
+The GUI never issues Hypervisor calls. Enumeration completes synchronously before
+initial GUI rendering. No parallel list manager or dynamic allocation was added.
+
+| Module | Responsibility |
 | --- | --- |
-| src/main.asm | BASIC 65 launcher, initialization, event loop, clean SYS return |
-| gui/screen.asm | ROM screen setup, positioning, PETSCII drawing, standard BASIC exit |
-| gui/panels.asm | Header, borders, titles, footer; panels_draw / panels_refresh |
-| gui/filelist.asm | Render 16 rows for render_panel via VFS; filelist_draw |
-| gui/input.asm | GETIN and dispatch; input_poll returns A=0 idle, 1 redraw, 2 exit |
-| core/navigation.asm | active_panel, selected[2], scroll[2]; init/up/down/tab |
-| core/vfs.asm | Record schema and mock enumeration; vfs_entry / vfs_read |
-| data/mockfiles.asm | Two independent directories with 24 and 18 entries |
-| drivers/fat32.asm | Future SD FAT32 backend; currently comments only |
-| drivers/dos.asm | Future D81/internal/external DOS backend; currently comments only |
-| drivers/iec.asm | Future IEC backend; currently comments only |
+| main.asm | Existing BASIC launcher and event loop; call VFS init/exit |
+| gui/screen.asm | Unchanged ROM display initialization, drawing and BASIC exit |
+| gui/panels.asm | Existing layout plus SD root title, version and VFS status |
+| gui/filelist.asm | Existing rows/highlight/scroll rendering plus left size column |
+| gui/input.asm | Unchanged GETIN dispatch for Up/Down/TAB/X |
+| core/navigation.asm | Existing state/scroll logic; guard zero-entry panels |
+| core/vfs.asm | Left FAT32 snapshot, right mock, counts and status/error |
+| drivers/fat32.asm | Only place that issues HDOS traps; normalize one record |
+| data/mockfiles.asm | Unchanged Stage 1a data, right directory still used |
+| drivers/dos.asm, drivers/iec.asm | Unchanged inert placeholders |
 
-## Calling conventions
+Unless documented otherwise A/X/Y/arithmetic flags are clobbered, the stack is
+balanced and calls are synchronous/non-reentrant. No application zero page,
+custom IRQ, MAP changes, raw SD registers or writes are used. The ROM retains
+ownership of the screen and keyboard. Existing writable instruction operands
+provide record and string pointers without borrowing KERNAL zero page.
 
-Unless stated otherwise routines destroy A/X/Y and arithmetic flags. They return
-through RTS and leave the stack balanced. Calls are synchronous and non-reentrant.
-No custom IRQ, memory manager or application zero-page allocation is needed.
-ROM IRQs and keyboard service remain enabled under normal BASIC startup state.
+- `fat32_init`: reset state, only when no owned handle is open.
+- `fat32_open_root`: select default HDOS partition/root, open; C=1 success,
+  C=0 failure; error in `fat32_error`.
+- `fat32_read_next`: A=0 record in `fat32_record`, 1=end, 2=error, 3=filtered.
+- `fat32_close`: close only owned handle, idempotent; C=1 success, C=0 failure.
+  Save the first error; retain failed handle for one further attempt on X.
+- `vfs_init`: enumerate left snapshot, always attempt cleanup, publish count,
+  `vfs_status` (0=OK, 1=empty, 2=truncated, 3=access/cleanup error) and `vfs_error`.
+  Open failure yields zero entries; read failure can retain a partial list.
+- `vfs_entry`: X=panel, A=valid index; select record operand. Preserves X,
+  destroys A/Y/flags. Caller checks count first. VFS's private write operand
+  is selected here too, and used only after its capacity check.
+- `vfs_read`: Y=offset, A=byte; preserves X/Y.
+- `vfs_close`: retry any still-owned handle on application exit.
+- Navigation preserves Y, clobbers A/X/flags. Empty panels retain index/offset 0.
+  Nonempty panels satisfy scroll <= selected < scroll+16. TAB only toggles panel.
+- `screen_at`: X=row/Y=column; `screen_text`: A/Y=low/high NUL PETSCII pointer.
 
-screen_at takes X=row and Y=column. screen_text takes A/Y=low/high address of a
-NUL-terminated PETSCII string shorter than 256 bytes. The program owns its writable
-code/data; screen_text and vfs_entry patch absolute instruction operands to avoid
-borrowing ROM zero page. ROM routines must not call these routines recursively.
+## Hypervisor ABI audit
 
-Navigation preserves Y and clobbers A/X/flags. panel indices are 0/1, selection
-and scroll are byte indices. Down clamps at count-1; Up clamps at zero. After a
-move, scroll <= selection < scroll+16. TAB only toggles active_panel. Counts must
-be nonzero, at most 255; handling empty directories is a later VFS requirement.
+Official sources consulted:
 
-vfs_entry takes X=panel, A=valid index; preserves X, destroys A/Y/flags and sets
-the operand used by vfs_read. vfs_read takes Y=record offset, returns A and
-preserves X/Y. Callers check entry_counts before requesting a record.
+- [User Guide HDOS reference and examples](https://github.com/MEGA65/mega65-user-guide/blob/master/appendix-hypervisor-calls.tex).
+- [Released core HDOS implementation](https://github.com/MEGA65/mega65-core/blob/release-0.97.2/src/hyppo/dos.asm).
+- [Released core directory structure and return/copy implementation](https://github.com/MEGA65/mega65-core/blob/release-0.97.2/src/hyppo/main.asm).
+- [mega65-libc directory wrapper](https://github.com/MEGA65/mega65-libc/blob/master/src/cc65/dirent.s), consulted but not copied.
 
-Each 24-byte record contains type (0=file, 1=directory), flags (bit 0=read-only),
-size in illustrative KiB (little-endian 16-bit, zero=unknown), and a 20-byte padded
-uppercase PETSCII filename. The GUI uses type/name only. Real drivers will translate
-names into this display encoding and publish bounded enumeration buffers; long
-names, byte-accurate sizes, empty lists, backend errors and operations require a
-future interface revision. GUI drawing must not acquire backend-specific logic.
+Every call is `LDA #service : STA $D640 : CLV`. The trap is a CPU Hypervisor
+transition, not JSR. Execution resumes after STA; CLV must be harmless because
+some core versions skip that byte. C=1 success; C=0 error in A. Registers other
+than documented outputs are preserved by HDOS. The wrappers conservatively
+advertise A/X/Y/flags as clobbered. No version query that alters Z is needed.
 
-## Display and return to BASIC
+| Service | A input | Other input | Output / side effects |
+| --- | --- | --- | --- |
+| getdefaultdrive | $02 | — | A=boot-selected HDOS partition |
+| cdrootdir | $3C | X=partition | Select partition and change HDOS cwd to root |
+| opendir | $12 | — | A=owned directory descriptor |
+| readdir | $14 | X=descriptor, Y=transfer page | 87 bytes into mapped user RAM |
+| closedir | $16 | X=descriptor | Release only that descriptor |
 
-Stage 1a deliberately uses 80×25: it provides ample two-panel width while a
-16-row viewport exercises scrolling in both mocks. It delegates VIC-IV geometry,
-screen RAM and colour RAM locations to the native ROM using CHROUT ESC then 8.
-PLOT positions the cursor, CHROUT draws PETSCII and GETIN reads keyboard events.
-This is a VIC-IV text display, not a bitmap window system. Borders are ASCII
-separators; drawing stays short of column 79 to avoid screen-editor line pushing.
-Row 24 is unused to avoid bottom-line scrolling. Active title/selection use white
-reverse text, inactive contents use cyan. The ROM background palette is retained.
+No closeall, setname, loadfile, writefile, delete, rename, mount or raw-sector
+service is called. cdrootdir changes in-memory HDOS state only. The program does
+not restore the old HDOS directory because getcwd is documented unimplemented.
+Native BASIC 65 mappings and enhanced I/O are prerequisites; GO64/custom MAP
+startup is not supported. No additional setup-transfer-area call is required:
+readdir takes its page in Y each time and initializes the copy region itself.
 
-No application MAP, CPU speed, VIC register, DMA, palette, IRQ vector or screen
-pointer changes are made. ROM screen initialization owns its required hardware
-changes. X calls KERNAL CINT ($FF81), explicitly requests 80×25, upper-case,
-reverse-off, white text and clear/home, then returns through the original SYS
-stack frame. Processor flags saved by the entry PHP are restored with PLP.
-The previous screen contents, colours and 40/50-row mode are **not** restored;
-the intentional fallback is a cleared standard BASIC display. The project owner confirmed the README XEMU checklist, including BASIC return,
-on 2026-10-12. Other ROM/core combinations and real hardware remain untested.
-Do not confuse CINT with IOINIT: no storage initialization is invoked.
+Errors include $80 no drive, $84 descriptors exhausted, $87 not a directory,
+$89 invalid descriptor, $07 timeout, $08 partition error, $10 bad transfer address
+and $20 read error. The guide's example uses $85 for directory end; the released
+implementation returns $FF EOF. Both are accepted on readdir only. $FF on root
+selection/open is reported as an access error (including unsupported service).
+The $85 EOF convention cannot distinguish a corrupt cluster reported with that
+same code; test with a known-good filesystem. Service availability is checked by
+its result, not by a guessed version threshold: released core constants still
+report Hyppo 1.2 despite the guide describing cdrootdir as added in 1.16.
 
-## Technical references
+## Dirent format, names and attributes
 
-- [Official ROM changelog](https://github.com/MEGA65/mega65-rom-public/blob/main/CHANGELOG.md): ESC 4/5/8 text modes.
-- [MEGA65 register map](https://github.com/MEGA65/mega65-core/blob/development/iomap.txt): VIC-IV and keyboard interfaces.
-- [Official ROM transition examples](https://mega65.atlassian.net/wiki/spaces/MEGA65/pages/5603329/Transitioning+programs+to+use+ROM+920373): colour RAM changed with ROM 920373; hardcoded C64 addresses are unsuitable.
-- [MEGA65 open-ROM status/jump table](https://github.com/MEGA65/open-roms/blob/master/STATUS.md): KERNAL entry points. The supported runtime here is native MEGA65 BASIC 65 ROM, not an untested alternative ROM.
+The audited release-0.95, release-0.96.0 and release-0.97.2 structure matches the
+87-byte layout documented in the guide:
 
-## Validation and limitations
+| Offset | Data |
+| --- | --- |
+| $00–$3F | HDOS long-name storage, up to 64 bytes |
+| $40 | Long-name length |
+| $41–$4B | Raw 8+3 alias, space padded; no separator |
+| $4C–$4D | Reserved short-name storage; not read |
+| $4E–$51 | First cluster, LE32; not used |
+| $52–$55 | File length in bytes, LE32 |
+| $56 | FAT attributes |
 
-Source inspection checked module imports, entry counts/record widths, viewport
-bounds and the absence of filesystem calls or device-register accesses. Navigation
-was exercised with a temporary source-instruction interpreter for the actual
-navigation routine (all valid selection/scroll states in both directories and
-TAB preservation). This does not validate an assembled binary or ROM behavior.
+Some libc wrappers assume size at $51 and attributes at $55; their cluster-copy
+code also has an inconsistent address. These were not used. Offsets $52/$56 are
+confirmed by counting the actual reserved bytes in released `main.asm` and by
+`trap_dos_readdir` copying that entire structure. Older/different ABIs are not
+silently guessed; use the documented released format for the initial test.
 
-Assembly succeeded using the supplied KickAss65CE02-5.25.jar after fixing forward
-constant references. PRG header/launcher checks passed. The project owner reported on 2026-10-12 that all README checklist items passed
-in XEMU: visible rendering, keyboard navigation, scrolling, panel-state preservation
-and standard BASIC return. The agent did not execute XEMU; emulator and ROM versions
-were not provided. Real MEGA65 hardware testing remains outstanding. Redrawing both
-lists on navigation is intentionally simple and may need optimization if ROM
-output produces visible flicker. No filesystem access, mouse support, sorting,
-file operations or launch support is present.
+Stage 1b intentionally displays only the 8.3 alias: trim spaces, insert a dot
+when an extension exists, uppercase ASCII a–z. Unsupported extended glyphs and
+controls become '?'. Dot entries, volume labels/raw LFN entries, empty/deleted
+aliases are filtered. Hidden/system entries are shown. Attributes 0–5 are
+preserved: read-only, hidden, system, volume, directory, archive. The directory
+bit determines the existing [DIR] marker. No new permission operations exist.
+
+The original VFS record remains 24 bytes: type byte (0=file, 1=directory), flags
+byte, size LE16 KiB, 20-byte padded PETSCII name. The FAT bits occupy flags 0–5;
+bit 6 marks known file size, bit 7 marks saturation. Sizes are floor(bytes/1024),
+saturated at 65535; files under 1 KiB and zero-byte files show 0K. Directories
+have no displayed size. The right mock rendering remains unchanged.
+
+LFN display/Unicode are not implemented. HDOS only retains the low UTF-16 byte,
+and may skip entries with long names exceeding its ~63-character limit before
+returning even their alias. The explorer cannot recover omitted entries through
+this API. The name buffer cannot overflow: an alias is at most 12 display bytes.
+
+## Memory and bounds
+
+The PRG owns all its code/data and reserved buffers in bank 0. No ROM, screen,
+Hypervisor-private memory or unrelated BASIC zero page is used as scratch.
+
+| Area in validated build | Address | Bytes |
+| --- | --- | --- |
+| BASIC launcher, code, globals, mocks, alignment padding | $2001–$2BFF | 3071 |
+| HDOS transfer page | $2C00–$2CFF | 256 |
+| VFS snapshot, 128 × 24 | $2D00–$38FF | 3072 |
+
+The loaded memory span is 6399 bytes; the PRG adds a two-byte load address.
+The driver also has a 24-byte normalized record and four-byte size scratch inside
+the code/data area. The Hypervisor's 87-byte transfer fits inside its private
+256-byte page. Assembler assertions enforce alignment, legal transfer address
+<= $7E00 and total buffer end <= $8000. Addresses are symbol-derived, not fixed
+runtime scratch addresses; the assertions protect subsequent changes.
+
+Every cache write checks count < 128 first. At 128 entries a further *displayable*
+record produces a truncation notice; EOF immediately after entry 128 does not.
+Filtered records do not consume capacity. Count never wraps; selection is byte
+based and the maximum selection is 127. All file rows check count before reads.
+Binary tests use canaries immediately after the buffer and exercise 127/128/129
+and 200 entries. No second list implementation or unbounded allocation exists.
+
+## Validation and limits
+
+Assembly passed; three memory assertions passed. Nine py65 binary-logic tests
+passed with simulated HDOS/KERNAL results, including CLV executed/skipped,
+cleanup/error priority, EOF, empty state, bounded caching, names, sizes and
+navigation/event-loop handling. They execute the real PRG's 6502-subset code but
+are not tests of MEGA65 memory mapping, ROM, Hypervisor or SD behavior.
+
+Stage 1b has not been executed in XEMU in this environment, and has no
+project-owner runtime confirmation yet. Final Stage 1b Stable approval remains
+pending the [manual XEMU checklist](xemu-stage1b.md). No hardware test is required.
+Enumeration blocks initial GUI drawing; a slow SD card can delay startup.
+There is no refresh, sorting, directory descent, retry key, file operation or
+mouse support. X retries cleanup then uses the unchanged Stage 1a standard BASIC
+screen exit. If the Hypervisor itself persistently refuses closedir, the error is
+reported, but the program cannot guarantee that the handle was released.

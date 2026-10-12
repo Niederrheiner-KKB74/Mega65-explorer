@@ -15,12 +15,16 @@ navigation_tab:
     rts
 navigation_up:
     ldx active_panel
+    lda entry_counts,x
+    beq navigation_done
     lda selected,x
     beq navigation_done
     dec selected,x
     jmp navigation_visible
 navigation_down:
     ldx active_panel
+    lda entry_counts,x
+    beq navigation_done
     lda selected,x
     clc
     adc #1
