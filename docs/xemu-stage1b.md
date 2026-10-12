@@ -8,7 +8,10 @@ boot, not Commodore unit 8. Older Hyppo without cdrootdir produces an error.
 
 No existing XEMU installation or SD image is present in the agent environment;
 these instructions are for the project owner's setup. Stage 1a was already
-confirmed on XEMU and real hardware, but Stage 1b needs a separate test.
+confirmed on XEMU and real hardware. On 2026-10-12 the project owner confirmed
+completion of this Stage 1b checklist and the working build of commit
+577e7fa5fa4d6eae73054134d2dda94f52a6b5bb. Stage 1b is Stable. This is
+owner-reported testing; the agent did not execute XEMU. Test versions were not supplied.
 
 ## Use a disposable copy
 
@@ -108,5 +111,6 @@ an error notice while TAB/navigation/X remain responsive. Use symbols from
 `src/main.sym`; do not change the service number or issue write/mount traps.
 
 Report XEMU version, core/Hyppo/ROM versions, which SD partition was used and the
-checklist result. The project owner grants Stage 1b Stable only after this test.
+checklist result when reporting future tests. The project owner confirmed Stage 1b
+Stable through completion of this checklist on 2026-10-12.
 Real hardware testing is optional under the project's updated release policy.
