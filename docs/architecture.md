@@ -159,9 +159,11 @@ cleanup/error priority, EOF, empty state, bounded caching, names, sizes and
 navigation/event-loop handling. They execute the real PRG's 6502-subset code but
 are not tests of MEGA65 memory mapping, ROM, Hypervisor or SD behavior.
 
-Stage 1b has not been executed in XEMU in this environment, and has no
-project-owner runtime confirmation yet. Final Stage 1b Stable approval remains
-pending the [manual XEMU checklist](xemu-stage1b.md). No hardware test is required.
+On 2026-10-12 the project owner confirmed completion of the
+[manual XEMU checklist](xemu-stage1b.md) and the working build of implementation
+commit 577e7fa5fa4d6eae73054134d2dda94f52a6b5bb. Stage 1b is now Stable.
+This is owner-reported runtime validation; the agent did not execute XEMU.
+XEMU/core/ROM versions were not supplied. No hardware test is required.
 Enumeration blocks initial GUI drawing; a slow SD card can delay startup.
 There is no refresh, sorting, directory descent, retry key, file operation or
 mouse support. X retries cleanup then uses the unchanged Stage 1a standard BASIC
