@@ -24,9 +24,7 @@ panels_draw:
     ldx #23
     ldy #2
     jsr screen_at
-    lda #<status
-    ldy #>status
-    jsr screen_text
+    jsr panels_status
     lda #3
     sta border_row
 panels_border:
@@ -88,13 +86,46 @@ render_panel: .byte 0
 border_row: .byte 0
 title_lo: .byte <left_title,<right_title
 title_hi: .byte >left_title,>right_title
-header: .text "MEGA65 EXPLORER                                                   V0.1A"
+header: .text "MEGA65 EXPLORER                                                   V0.1B"
 .byte 0
-left_title: .text "SD: /GAMES                           "
+left_title: .text "SD: /                                "
 .byte 0
 right_title: .text "D81: UNIT 8                          "
 .byte 0
 shortcuts: .text "TAB PANEL   UP/DOWN SELECT   X EXIT"
 .byte 0
-status: .text "MOCK DATA ONLY - NO STORAGE ACCESS | GPL-3.0; SEE LICENSE; NO WARRANTY"
+// Status text consumes only row 23; no HDOS calls in the GUI.
+panels_status:
+    ldx vfs_status
+    lda status_lo,x
+    ldy status_hi,x
+    jsr screen_text
+    lda vfs_status
+    cmp #3
+    bne panels_status_done
+    lda vfs_error
+    lsr
+    lsr
+    lsr
+    lsr
+    tax
+    lda hex_digits,x
+    jsr CHROUT
+    lda vfs_error
+    and #$0f
+    tax
+    lda hex_digits,x
+    jsr CHROUT
+panels_status_done:
+    rts
+status_lo: .byte <status_ok,<status_empty,<status_truncated,<status_error
+status_hi: .byte >status_ok,>status_empty,>status_truncated,>status_error
+status_ok: .text "SD ROOT: READ ONLY | 8.3 NAMES | SIZES: KIB FLOOR | RIGHT: MOCK"
 .byte 0
+status_empty: .text "SD ROOT: EMPTY (NO DISPLAYABLE ENTRIES) | RIGHT: MOCK | X EXIT"
+.byte 0
+status_truncated: .text "SD ROOT: LIST TRUNCATED TO 128 ENTRIES | READ ONLY | RIGHT: MOCK"
+.byte 0
+status_error: .text "SD ACCESS ERROR (LIST MAY BE INCOMPLETE) | X EXIT | HDOS $"
+.byte 0
+hex_digits: .text "0123456789ABCDEF"
