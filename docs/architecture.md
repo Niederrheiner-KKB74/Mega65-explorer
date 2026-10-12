@@ -62,8 +62,8 @@ changes. X calls KERNAL CINT ($FF81), explicitly requests 80×25, upper-case,
 reverse-off, white text and clear/home, then returns through the original SYS
 stack frame. Processor flags saved by the entry PHP are restored with PLP.
 The previous screen contents, colours and 40/50-row mode are **not** restored;
-the intentional fallback is a cleared standard BASIC display. Exit reliability
-across supported ROM/core combinations still needs actual machine testing.
+the intentional fallback is a cleared standard BASIC display. The project owner confirmed the README XEMU checklist, including BASIC return,
+on 2026-10-12. Other ROM/core combinations and real hardware remain untested.
 Do not confuse CINT with IOINIT: no storage initialization is invoked.
 
 ## Technical references
@@ -82,10 +82,10 @@ navigation routine (all valid selection/scroll states in both directories and
 TAB preservation). This does not validate an assembled binary or ROM behavior.
 
 Assembly succeeded using the supplied KickAss65CE02-5.25.jar after fixing forward
-constant references. PRG header/launcher checks passed. XEMU and hardware tests
-were not performed. Stage 1a acceptance remains pending until visible rendering,
-keyboard codes, scroll preservation
-and standard BASIC return are verified with the README checklist. Redrawing both
+constant references. PRG header/launcher checks passed. The project owner reported on 2026-10-12 that all README checklist items passed
+in XEMU: visible rendering, keyboard navigation, scrolling, panel-state preservation
+and standard BASIC return. The agent did not execute XEMU; emulator and ROM versions
+were not provided. Real MEGA65 hardware testing remains outstanding. Redrawing both
 lists on navigation is intentionally simple and may need optimization if ROM
 output produces visible flicker. No filesystem access, mouse support, sorting,
 file operations or launch support is present.
