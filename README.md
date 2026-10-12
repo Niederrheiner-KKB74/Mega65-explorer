@@ -1,4 +1,4 @@
-# MEGA65 Explorer — Stage 1b (0.1b)
+# MEGA65 Explorer — Stage 1b Stable (0.1b)
 
 A two-panel file explorer for the MEGA65, written in KickAssembler assembly for
 the 45GS02. Stage 1b reads the **default HDOS SD partition's FAT32 root** into
@@ -22,8 +22,9 @@ optional. Stage 1b is based on that commit, with its PR initially targeting
 - The existing 80×25 layout, colours, 16-row viewport, selection and panel state.
 - No file operations, mounting, raw SD access or filesystem writes.
 
-This is **not yet Stage 1b Stable**. Final approval requires the project owner's
-XEMU test. Subdirectory navigation, LFN display, sorting and refresh are planned.
+**Stage 1b Stable:** on 2026-10-12 the project owner confirmed the completed
+XEMU acceptance checklist and working build for implementation commit
+[`577e7fa`](https://github.com/Niederrheiner-KKB74/Mega65-explorer/commit/577e7fa5fa4d6eae73054134d2dda94f52a6b5bb). Subdirectory navigation, LFN display, sorting and refresh are planned.
 HDOS may omit entries whose long names exceed its own limit, even if they have
 an 8.3 alias; see [architecture](docs/architecture.md).
 
@@ -68,8 +69,10 @@ make test KICKASS_JAR=/absolute/path/to/KickAss65CE02-5.25.jar
 In the implementation environment py65 source was retrieved through the GitHub
 integration into `/tmp/py65-local`; the exact executed test command was:
 `PYTHONPATH=/tmp/py65-local make test KICKASS_JAR=/workspace/attachments/1a813b32-80e6-4ad0-a9de-b319cc0f642a/KickAss65CE02-5.25.jar`.
-XEMU is not installed here, so Stage 1b was **not executed in XEMU or on hardware**.
-No user-confirmed Stage 1b runtime result has yet been received.
+The agent did not execute XEMU or hardware tests. On 2026-10-12 the project owner
+confirmed that the XEMU acceptance checklist was completed and the build works.
+This is owner-reported runtime validation; XEMU/core/ROM versions were not supplied.
+Hardware testing is optional under project policy.
 
 ## Keyboard controls
 
@@ -95,7 +98,7 @@ directory. No mounted D81 is changed.
 
 ## Roadmap
 
-1. Project-owner XEMU validation and Stage 1b Stable approval.
+1. Stage 1b Stable: build and project-owner XEMU acceptance confirmed.
 2. Subdirectory navigation and richer VFS metadata/errors.
 3. D81/DOS browsing, internal/external drives and IEC.
 4. Copy, rename, delete and launch with explicit error handling.
