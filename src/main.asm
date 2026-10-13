@@ -1,4 +1,4 @@
-// MEGA65 Explorer Stage 1b, 2026-10-12. GPL-3.0; see LICENSE.
+// MEGA65 Explorer Stage 1c, 2026-10-12. GPL-3.0; see LICENSE.
 // Uses the 6502-compatible subset of the 45GS02, native BASIC 65 ROM.
 .encoding "petscii_upper"
 .const CHROUT = $ffd2
@@ -50,6 +50,8 @@ fat32_transfer: .fill 256,0
 fat32_transfer_end:
 vfs_buffer: .fill MAX_ENTRIES*ENTRY_SIZE,0
 vfs_buffer_end:
+vfs_staging: .fill MAX_ENTRIES*ENTRY_SIZE,0
+vfs_staging_end:
 .assert "Page-aligned HDOS transfer", 0, fat32_transfer & $ff
 .assert "Transfer fits documented range", true, fat32_transfer <= $7e00
-.assert "Directory buffer remains below $8000", true, vfs_buffer_end <= $8000
+.assert "Directory buffer remains below $8000", true, vfs_staging_end <= $8000

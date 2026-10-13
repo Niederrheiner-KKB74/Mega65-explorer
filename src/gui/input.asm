@@ -6,6 +6,10 @@ input_poll:
     beq input_up
     cmp #$11
     beq input_down
+    cmp #$0d
+    beq input_enter
+    cmp #$14
+    beq input_parent
     cmp #9
     beq input_tab
     cmp #'X'
@@ -28,3 +32,8 @@ input_changed:
 input_exit:
     lda #2
     rts
+
+input_enter:
+    jmp navigation_enter
+input_parent:
+    jmp navigation_parent

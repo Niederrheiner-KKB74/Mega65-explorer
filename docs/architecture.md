@@ -1,24 +1,27 @@
-# Stage 1b architecture
+# Stage 1c architecture
 
-The stable Stage 1a reference is commit d4bf66207e900b756f96f67a12cf4e9f58da19ff;
-its source is unchanged on the Stage 1a branch. The project owner confirmed both
-XEMU and hardware testing. Future regular release testing requires XEMU only.
+Stage 1c uses only the Stage 1b Stable merge commit
+7a837f9c768234caeba5261fe0fec7bd5436617f as its development base. Its tree includes
+owner-confirmed Stage 1b acceptance. It was merged into feature/stage-1a-gui,
+while main currently contains Stage 1a. The stable commit is preserved; all new
+source changes are isolated on feature/stage-1c-navigation. XEMU is the regular
+release test platform; hardware testing is optional.
 
 ## Data flow and module interfaces
 
 `HDOS → drivers/fat32.asm → core/vfs.asm → bounded records → gui/filelist.asm`.
 The GUI never issues Hypervisor calls. Enumeration completes synchronously before
-initial GUI rendering. No parallel list manager or dynamic allocation was added.
+initial GUI rendering and during directory transitions. No parallel list manager or dynamic allocation was added.
 
 | Module | Responsibility |
 | --- | --- |
 | main.asm | Existing BASIC launcher and event loop; call VFS init/exit |
 | gui/screen.asm | Unchanged ROM display initialization, drawing and BASIC exit |
-| gui/panels.asm | Existing layout plus SD root title, version and VFS status |
+| gui/panels.asm | Existing layout plus dynamic path/title, version and VFS status |
 | gui/filelist.asm | Existing rows/highlight/scroll rendering plus left size column |
-| gui/input.asm | Unchanged GETIN dispatch for Up/Down/TAB/X |
-| core/navigation.asm | Existing state/scroll logic; guard zero-entry panels |
-| core/vfs.asm | Left FAT32 snapshot, right mock, counts and status/error |
+| gui/input.asm | Existing GETIN dispatch plus Return and Backspace |
+| core/navigation.asm | State/scroll logic and left-only directory event gating |
+| core/vfs.asm | Transactional FAT32 snapshots, path/history, right mock, status/error |
 | drivers/fat32.asm | Only place that issues HDOS traps; normalize one record |
 | data/mockfiles.asm | Unchanged Stage 1a data, right directory still used |
 | drivers/dos.asm, drivers/iec.asm | Unchanged inert placeholders |
@@ -70,9 +73,9 @@ advertise A/X/Y/flags as clobbered. No version query that alters Z is needed.
 | readdir | $14 | X=descriptor, Y=transfer page | 87 bytes into mapped user RAM |
 | closedir | $16 | X=descriptor | Release only that descriptor |
 
-No closeall, setname, loadfile, writefile, delete, rename, mount or raw-sector
-service is called. cdrootdir changes in-memory HDOS state only. The program does
-not restore the old HDOS directory because getcwd is documented unimplemented.
+No closeall, setname, findfile, loadfile, writefile, delete, rename, mount or
+raw-sector service is called. CHDIR $0C is the only added trap. cdrootdir changes in-memory HDOS state only. The program does
+not restore a pre-RUN HDOS directory because getcwd is documented unimplemented.
 Native BASIC 65 mappings and enhanced I/O are prerequisites; GO64/custom MAP
 startup is not supported. No additional setup-transfer-area call is required:
 readdir takes its page in Y each time and initializes the copy region itself.
@@ -108,14 +111,14 @@ confirmed by counting the actual reserved bytes in released `main.asm` and by
 `trap_dos_readdir` copying that entire structure. Older/different ABIs are not
 silently guessed; use the documented released format for the initial test.
 
-Stage 1b intentionally displays only the 8.3 alias: trim spaces, insert a dot
+The renderer intentionally displays only the 8.3 alias: trim spaces, insert a dot
 when an extension exists, uppercase ASCII a–z. Unsupported extended glyphs and
 controls become '?'. Dot entries, volume labels/raw LFN entries, empty/deleted
 aliases are filtered. Hidden/system entries are shown. Attributes 0–5 are
 preserved: read-only, hidden, system, volume, directory, archive. The directory
 bit determines the existing [DIR] marker. No new permission operations exist.
 
-The original VFS record remains 24 bytes: type byte (0=file, 1=directory), flags
+The Stage 1b VFS record remains 24 bytes: type byte (0=file, 1=directory), flags
 byte, size LE16 KiB, 20-byte padded PETSCII name. The FAT bits occupy flags 0–5;
 bit 6 marks known file size, bit 7 marks saturation. Sizes are floor(bytes/1024),
 saturated at 65535; files under 1 KiB and zero-byte files show 0K. Directories
@@ -126,46 +129,122 @@ and may skip entries with long names exceeding its ~63-character limit before
 returning even their alias. The explorer cannot recover omitted entries through
 this API. The name buffer cannot overflow: an alias is at most 12 display bytes.
 
+## Directory lookup and cwd synchronization
+
+[Official CHDIR documentation](https://github.com/MEGA65/mega65-user-guide/blob/master/appendix-hypervisor-calls.tex)
+confirms `$0C` changes HDOS's in-memory cwd to the last found directory entry,
+including entries found through readdir. It is not a pathname-taking trap.
+The guide's setname/findfile example can depend on LFN case behavior; Stage 1c
+instead re-enumerates the current directory and compares its normalized 8.3 alias
+and directory type. `fat32_change_directory` closes its own enumeration descriptor
+before issuing CHDIR. Released `dos_closefile` frees the descriptor without
+replacing the HDOS dirent; this ordering is verified in
+[release-0.97.2 dos.asm](https://github.com/MEGA65/mega65-core/blob/release-0.97.2/src/hyppo/dos.asm).
+CHDIR may internally use a temporary descriptor, so releasing ours first also
+avoids unnecessarily exhausting HDOS's small descriptor pool.
+
+Driver interfaces: `fat32_select_root` selects root without opening a handle;
+`fat32_open_root` retains its Stage 1b behavior; `fat32_open_directory` opens the
+existing HDOS cwd; `fat32_change_directory` takes `fat32_component`, a padded
+20-byte safe alias, and returns C=1 success/C=0 error. Existing read_next and
+close are reused. All Hypervisor calls remain in the driver and use STA/CLV.
+Only $02/$3C/$12/$14/$16/$0C occur; none modifies FAT32 contents.
+
+Parent navigation is implemented by resolving the saved parent path from root,
+not by depending on a FAT `..` entry. The logical VFS parent operation replaces
+a separate driver parent operation. Similarly read-directory reuses the same
+Stage 1b enumeration loop, not a second implementation.
+
+`vfs_walk_path` selects root and resolves each path component through the driver.
+It is used for both target navigation and rollback. This guarantees the source
+of each transition without relying on getcwd or the global dirent from the last
+snapshot. Merely calling CHDIR against the cached selection would be incorrect:
+HDOS's last dirent after enumeration is not necessarily the selected entry.
+
+## Path, history and transactions
+
+The VFS owns `vfs_path`, `vfs_path_length` and `vfs_depth`. Root is `/`.
+Maximum depth is 8 below root. Maximum full path is 96 ASCII characters including
+slashes; both path buffers allocate 97 bytes including NUL. Each component is an
+8.3 alias of at most 12 display bytes. The Hypervisor is given one component at
+a time; the overall 96-character bound is the application's safe fixed limit.
+Lossy display aliases containing `?` are refused before any HDOS action.
+
+A candidate path is scratch for a transition, not a second committed cwd.
+The 24-byte history has eight parent-prefix lengths, eight selection indices and
+eight scroll offsets. Child transitions append a component to the committed
+prefix only after lookup, reading and cleanup succeed. Parent transitions truncate
+the candidate at the saved prefix length and pop history only on success.
+Parent selections are restored and clamped if a directory changed externally;
+empty parents reset selection/scroll to zero. Right-panel state is untouched.
+No synthetic `..` entry is needed.
+
+The GUI derives a 37-character title from the committed path: `SD: ` plus up to
+33 path characters. If longer, `...` plus the last 30 characters are copied into
+the existing title render buffer. This never shortens the actual VFS path.
+
+Two 128-entry buffers implement a transaction using the existing record renderer.
+The visible directory pointer/count are saved, enumeration targets the inactive
+buffer, and only success (including empty/truncated) swaps the committed slot.
+Partial read/close failure restores the old pointer/count. This avoids copying
+large buffers or drawing a new path above old-directory records.
+
+Failure recovery proceeds in a fixed sequence, never an unbounded retry loop:
+
+1. Save the first error and replay the old committed path from root.
+2. If successful, retain path/history/selection/snapshot and display the error.
+3. If repair fails, try root and a new root snapshot; reset left history/state.
+   If root reading fails, show an empty root list with an error, never stale rows.
+4. If cleanup or root selection itself fails, show `SD: ?`, count zero and
+   disable SD navigation. TAB, right-panel navigation and X remain available;
+   X makes the existing final owned-handle close attempt.
+
+Status values extend Stage 1b: 0 OK, 1 empty, 2 truncated, 3 access/recovery error,
+4 depth limit, 5 path limit, 6 unsupported alias, 7 unavailable context. Status
+rows are cleared before redrawing so shorter messages leave no artifacts.
+
 ## Memory and bounds
 
-The PRG owns all its code/data and reserved buffers in bank 0. No ROM, screen,
-Hypervisor-private memory or unrelated BASIC zero page is used as scratch.
-
-| Area in validated build | Address | Bytes |
+| Validated Stage 1c area | Address | Bytes |
 | --- | --- | --- |
-| BASIC launcher, code, globals, mocks, alignment padding | $2001–$2BFF | 3071 |
-| HDOS transfer page | $2C00–$2CFF | 256 |
-| VFS snapshot, 128 × 24 | $2D00–$38FF | 3072 |
+| Launcher, code/data, paths/history, mocks and alignment | $2001–$31FF | 4607 |
+| HDOS transfer page | $3200–$32FF | 256 |
+| Snapshot A | $3300–$3EFF | 3072 |
+| Snapshot B | $3F00–$4AFF | 3072 |
 
-The loaded memory span is 6399 bytes; the PRG adds a two-byte load address.
-The driver also has a 24-byte normalized record and four-byte size scratch inside
-the code/data area. The Hypervisor's 87-byte transfer fits inside its private
-256-byte page. Assembler assertions enforce alignment, legal transfer address
-<= $7E00 and total buffer end <= $8000. Addresses are symbol-derived, not fixed
-runtime scratch addresses; the assertions protect subsequent changes.
+The PRG is 11,009 bytes including its two-byte load address. All application
+memory remains in loaded bank-0 RAM below $8000. No screen/colour memory, ROM or
+Hypervisor-private memory is borrowed. The two 97-byte paths, 24-byte history
+and scalar bookkeeping live within the code/data area. Six assembler assertions
+check both path capacities, history capacity, transfer alignment/legal address
+and the full snapshot end below $8000. Labels determine addresses automatically.
+The transfer page still fits the verified 87-byte HDOS record.
 
-Every cache write checks count < 128 first. At 128 entries a further *displayable*
-record produces a truncation notice; EOF immediately after entry 128 does not.
-Filtered records do not consume capacity. Count never wraps; selection is byte
-based and the maximum selection is 127. All file rows check count before reads.
-Binary tests use canaries immediately after the buffer and exercise 127/128/129
-and 200 entries. No second list implementation or unbounded allocation exists.
+Every cache write retains Stage 1b's count <128 check; names/types/size conversion
+and record width are unchanged. Return checks count/type, then depth/path/name
+limits before calling HDOS. A non-directory, empty selection, right-panel Return
+or Backspace, and root Backspace have no filesystem effects. Existing GETIN
+repeat behavior is retained; Backspace is PETSCII $14, Return $0D.
 
-## Validation and limits
+## Validation and remaining limitations
 
-Assembly passed; three memory assertions passed. Nine py65 binary-logic tests
-passed with simulated HDOS/KERNAL results, including CLV executed/skipped,
-cleanup/error priority, EOF, empty state, bounded caching, names, sizes and
-navigation/event-loop handling. They execute the real PRG's 6502-subset code but
-are not tests of MEGA65 memory mapping, ROM, Hypervisor or SD behavior.
+Stage 1c assembled with six successful assertions. All 22 py65 binary tests
+passed: nine untouched Stage 1b tests plus 13 Stage 1c tests. Coverage includes
+multiple levels, exact 96-character path, depth/path rejection, tail title,
+selection/scroll restoration, empty/large directories, inactive-panel gating,
+full keyboard event loop and failures before/after CHDIR, rollback, root fallback
+and persistent cleanup failure. Tests emulate the assembled 6502 subset with
+HDOS/KERNAL stubs and memory canaries; they do not execute MEGA65 ROM or XEMU.
 
-On 2026-10-12 the project owner confirmed completion of the
-[manual XEMU checklist](xemu-stage1b.md) and the working build of implementation
-commit 577e7fa5fa4d6eae73054134d2dda94f52a6b5bb. Stage 1b is now Stable.
-This is owner-reported runtime validation; the agent did not execute XEMU.
-XEMU/core/ROM versions were not supplied. No hardware test is required.
-Enumeration blocks initial GUI drawing; a slow SD card can delay startup.
-There is no refresh, sorting, directory descent, retry key, file operation or
-mouse support. X retries cleanup then uses the unchanged Stage 1a standard BASIC
-screen exit. If the Hypervisor itself persistently refuses closedir, the error is
-reported, but the program cannot guarantee that the handle was released.
+Stage 1c has not been executed in XEMU by the agent and has no owner-confirmed
+runtime result yet. Final Stage 1c Stable approval requires an actual XEMU run
+and explicit owner confirmation of [tests A–I](xemu-stage1c.md).
+
+HDOS LFN omission, ASCII alias-only display, KiB-floor/saturated sizes, EOF
+ambiguity $85 and native BASIC mappings remain as in Stage 1b. Re-enumeration and
+path replay are synchronous and can delay redraw on large/slow directories.
+External renames/removal can prevent replay; recovery handles this with the
+stated fallback. There is no file launch, refresh, sorting, LFN navigation,
+mouse support or file operation. X preserves the existing standard BASIC display
+exit and leaves HDOS at the last selected Explorer cwd; a persistent Hypervisor
+close failure cannot be forcibly repaired without interfering with other handles.

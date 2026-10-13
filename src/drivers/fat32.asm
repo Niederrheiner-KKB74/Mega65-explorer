@@ -15,6 +15,13 @@ fat32_init:
     rts
 // C=1 opened, C=0 error (fat32_error=A). Select default SD partition/root.
 fat32_open_root:
+    jsr fat32_select_root
+    bcc fat32_open_return
+    jmp fat32_open_directory
+fat32_open_return:
+    rts
+// Select the boot-default root without retaining a descriptor.
+fat32_select_root:
     lda #$02                 // getdefaultdrive, A=HDOS partition (not unit 8)
     sta HDOS
     clv
@@ -24,6 +31,10 @@ fat32_open_root:
     sta HDOS
     clv
     bcc fat32_fail
+    sec
+    rts
+// Open the already selected HDOS cwd.
+fat32_open_directory:
     lda #$12                 // opendir, A=descriptor
     sta HDOS
     clv
@@ -232,3 +243,49 @@ fat32_base_length: .byte 0
 fat32_extension_length: .byte 0
 fat32_size: .fill 4,0
 fat32_record: .fill ENTRY_SIZE,0
+
+// Change one component. Caller supplies a safe, padded 20-byte alias.
+// Re-enumerate to locate the HDOS dirent (avoids findfile LFN/alias ambiguity).
+// No cwd change until matching a directory and successfully closing our handle.
+fat32_change_directory:
+    jsr fat32_open_directory
+    bcc fat32_change_return
+fat32_change_scan:
+    jsr fat32_read_next
+    cmp #3
+    beq fat32_change_scan
+    cmp #2
+    beq fat32_change_cleanup
+    cmp #1
+    beq fat32_change_missing
+    lda fat32_record
+    cmp #TYPE_DIR
+    bne fat32_change_scan
+    ldx #0
+fat32_change_compare:
+    lda fat32_record+4,x
+    cmp fat32_component,x
+    bne fat32_change_scan
+    inx
+    cpx #20
+    bne fat32_change_compare
+    // Released HDOS closedir frees its descriptor without replacing dirent.
+    jsr fat32_close
+    bcc fat32_change_return
+    lda #$0c                 // chdir uses the last HDOS dirent, no arguments
+    sta HDOS
+    clv
+    bcs fat32_change_success
+    jmp fat32_fail
+fat32_change_success:
+    sec
+fat32_change_return:
+    rts
+fat32_change_missing:
+    lda #$88
+    sta fat32_error
+fat32_change_cleanup:
+    jsr fat32_close
+    clc
+    rts
+fat32_component: .fill 20,$20
