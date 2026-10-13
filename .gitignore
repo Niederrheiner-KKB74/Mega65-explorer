@@ -2,3 +2,4 @@ build/*
 !build/.gitkeep
 tools/
 *.sym
+__pycache__/

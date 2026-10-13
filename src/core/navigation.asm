@@ -51,3 +51,17 @@ navigation_done:
 active_panel: .byte 0
 selected: .byte 0,0
 scroll: .byte 0,0
+
+// New directory keys only act on the FAT32 panel. GETIN repeat stays unchanged.
+// Return A=0 no action, 1 redraw (also on a controlled navigation error).
+navigation_enter:
+    lda active_panel
+    bne navigation_no_action
+    jmp vfs_enter
+navigation_parent:
+    lda active_panel
+    bne navigation_no_action
+    jmp vfs_parent
+navigation_no_action:
+    lda #0
+    rts

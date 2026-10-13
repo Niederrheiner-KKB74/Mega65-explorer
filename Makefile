@@ -12,4 +12,4 @@ clean:
 
 # Optional binary logic tests: Python 3 + py65 (not an XEMU replacement).
 test: $(PRG)
-	python3 tests/test_stage1b.py
+	python3 -m unittest discover -s tests -p 'test_stage*.py' -v
